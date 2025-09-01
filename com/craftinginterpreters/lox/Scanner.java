@@ -39,7 +39,7 @@ class Scanner {
         while (!isAtEnd()) {
             // Beginning of the next lexeme
             start = current;
-            scanTokens();
+            scanToken();
         }
 
         tokens.add(new Token(EOF, "", null, line));
@@ -52,7 +52,7 @@ class Scanner {
             case '(': addToken(LEFT_PAREN); break;
             case ')': addToken(RIGHT_PAREN); break;
             case '{': addToken(LEFT_BRACE); break;
-            case '}': addToken(RIGHT_PAREN); break;
+            case '}': addToken(RIGHT_BRACE); break;
             case ',': addToken(COMMA); break;
             case '.': addToken(DOT); break;
             case '-': addToken(MINUS); break;
