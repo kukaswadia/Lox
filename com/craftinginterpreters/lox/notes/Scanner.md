@@ -224,3 +224,216 @@ It is the constructor. Purpose:
 - No access modifier means package\-private: only code in the same package can create a scanner (fine for an internal tool).
 - Could optionally validate (e.g. check for `null`) but minimal constructor keeps it simple.
 
+- The start and current fields are offsets that index into the string. The start field points to the first character in the lexeme being scanned, and current points at the character currently being considered. 
+- The line field tracks what source line current is on so we can produce tokens that know their location. 
+- The isAtEnd() helper function tells us if we have consumed all the characters. 
+- The advance() method consumes the next character in the source file and returns it. 
+- Where advance() is for input, addToken() is for output. It grabs the text of the current lexeme and creates a new token for it. 
+
+```java
+    private boolean match (char expected) {
+        if (isAtEnd()) return false;
+        if (source.charAt(current) != expected) return false;
+
+        current++;
+        return true;
+    }
+```
+
+It conditionally consumes the next character only if it matches an expected one (used for two‑character operators like \!=, ==, <=, >=).
+
+Step by step:
+1. `isAtEnd()` guard: If already at end of input, there is nothing to match; return false (do not advance).
+2. Character check: Compare the current (unconsumed) character at index `current` with `expected`. If different, return false (cursor stays put).
+3. On success: Increment `current` (consume that character).
+4. Return true indicating the expected character was present and consumed.
+
+Why not just call `advance()` and compare?
+- Because if it does *not* match you must not consume it; later logic still needs to see that character.
+- This pattern is a safe "peek and maybe advance."
+
+Effect:
+- Pointer (`current`) advances exactly one position only on a successful match.
+- Leaves state unchanged on failure.
+- Simplifies higher‑level code: `if (match('=')) addToken(EQUAL_EQUAL); else addToken(EQUAL);`
+
+To Summarise:
+- It's like conditional advance(). We only consume the current character if it's what we're looking for.
+- Using match(), we recognize these lexemes in two stages. When we reach, for example, !, we jump to its switch case.
+- That means we know the lexeme starts with !. Then we look at the next character to determine if we're on a != or merely a !.
+
+```java
+    private char peek() {
+        if (isAtEnd()) return '\0';
+        return source.charAt(current);
+    }
+```
+
+This defines a helper method that looks at the current character without consuming it.
+
+Syntax breakdown:
+- `private` \=> visible only inside the `Scanner` class.
+- `char` \=> return type is a single 16‑bit UTF‑16 code unit.
+- Method name `peek` \=> conventional for non\-consuming lookahead.
+- Empty parameter list `()` \=> no arguments.
+- Body `{ ... }` contains two `return` paths.
+
+Logic:
+1. `if (isAtEnd()) return '\0';`  
+   Calls another method to see if the cursor index `current` is at or beyond `source.length()`. If so, it returns the NUL character literal `'\0'` (used here as a sentinel indicating “no real character”).
+2. Otherwise returns `source.charAt(current);`  
+   Fetches but does not advance (so contrast with an `advance()` method that would increment `current`).
+
+Why `'\0'`:
+- Distinct from any valid source character (assuming typical source text) so downstream code can safely test for end.
+- Avoids throwing an exception by indexing past the end.
+
+Side effects:
+- None; it does not modify `current`.
+
+Usage:
+- Supports lookahead in scanning decisions (e.g., deciding if a `.` starts a number, or whether to enter a comment) without consuming input.
+
+
+It returns the single `char` located at position `current` in the `source` string.  
+Details:
+- `source` is the full input text.
+- `current` is an integer index pointing at the next character to look at.
+- The method looks (peeks) at that character without advancing the index.
+- The returned value is a 16‑bit UTF‑16 code unit (Java `char`), e.g. `'a'`, `'{'`, etc.
+
+Contrast: `advance()` both fetches the character and increments `current`; `peek()` (this method) just fetches it so calling code can decide what to do next.
+- It's sort of like advance(), but doesn't consume the character. This is called lookahead. 
+- Since it only looks at the current unconsumed character, we have one character of lookahead. 
+
+```java
+            case '/':
+                if (match('/')) {
+                    // A comment goes until the end of the line.
+                    while (peek() != '\n' && !isAtEnd()) advance();
+                } else {
+                    addToken(SLASH);
+                }
+                break;
+```
+
+It distinguishes between a division operator and a single‑line comment.
+
+- When a `/` is read, `match('/')` does a lookahead: if the next character is also `/`, both are consumed.
+- In that case it is a comment start `//`. The loop advances characters until a newline `\n` or end of file, effectively skipping the comment text (no token emitted).
+- If the next character is not `/`, it is just the division operator, so a `SLASH` token is added.
+- `peek()` lets it look at the current (next) character without consuming; `isAtEnd()` prevents overruns.
+- The `break` exits the switch after handling either path.
+
+Line by line:
+
+1. `case '/'`: We are handling the situation where the current character just consumed is a slash.
+2. `if (match('/')) {`: Look ahead for a second slash. `match` returns true and advances if the next character is `'/'`. If true, we have started a single‑line comment (`//`).
+3. Comment inside: Just a human note explaining the loop’s purpose.
+4. `while (peek() != '\n' && !isAtEnd()) advance();`: Skip every character of the comment until a newline or end of file is reached.
+    - `peek()` looks at the current unconsumed character without advancing.
+    - `advance()` consumes characters one by one.
+    - Loop stops on newline or when there is nothing left.
+5. `} else {`: If there was no second slash, it was only a single `/`.
+6. `addToken(SLASH);`: Emit a token representing the division operator.
+7. `}`: End of the if/else block.
+8. `break;`: Exit the switch so no further cases run for this character.
+
+If there is no second /, the scanner treats the single / as the division operator and calls addToken(SLASH) to emit a SLASH token.
+
+- This is similar to the other two-character operators, except that when we find a second /, we don't end the token yet. 
+- Instead, we keep consuming characters until we reach the end of the line. 
+- This is our general strategy for handling longer lexemes. After we detect the beginning of one, we shunt over to some lexeme-specific code that keeps eating characters until it sees the end. 
+
+```java
+            case ' ':
+            case '\r':
+            case '\t':
+                break;
+            case '\n':
+                line++;
+                break;
+```
+
+- When encountering whitespace, we simply go back to the beginning of the scan loop. That starts a new lexeme after the whitespace character. 
+- For new lines we do the same thing, but we also increment the line counter. 
+
+```java
+    private void string() {
+        while (peek() != '"' && !isAtEnd()) {
+            if (peek() == '\n') line++;
+            advance();
+        }
+        
+        if (isAtEnd()) {
+            Lox.error(line, "Unterminated string.");
+            return;
+        }
+        
+        advance();  // The closing ".
+        
+        // Trim the surrounding quotes. 
+        String value = source.substring(start + 1, current - 1);
+        addToken(STRING, value);
+    }
+```
+
+Line by line:
+
+1. `private void string() {`  
+   Starts the helper that scans a string literal (already consumed opening `"`).
+
+2. `while (peek() != '"' && !isAtEnd()) {`  
+   Loop until a closing quote is found or end of source reached.
+
+3. `if (peek() == '\n') line++;`  
+   Count newline characters inside the string to keep accurate line numbers.
+
+4. `advance();`  
+   Consume the current character and move forward.
+
+5. `}`  
+   Ends the while loop.
+
+6. `if (isAtEnd()) {`  
+   If end of source reached without closing quote.
+
+7. `Lox.error(line, "Unterminated string.");`  
+   Report an unterminated string error at current line.
+
+8. `return;`  
+   Abort string scanning (do not add a token).
+
+9. `}`  
+   End of the unterminated string handling block.
+
+10. `advance();  // The closing ".`  
+    Consume the closing quote character.
+
+11. `String value = source.substring(start + 1, current - 1);`  
+    Extract the string contents excluding the opening and closing quotes.
+
+12. `addToken(STRING, value);`  
+    Emit a STRING token with the extracted literal value.
+
+
+
+It scans a string literal after the opening quote has already been consumed.
+
+Step by step:
+1. Loop: while current char is not a closing `"` and not end of file, advance; if a newline is seen, increment line counter.
+2. If end of file is reached before a closing `"`, report an unterminated string error and abort.
+3. Consume the closing `"` (advance once more).
+4. Extract the raw string contents (exclude the surrounding quotes) using `substring(start + 1, current - 1)`.
+5. Emit a `STRING` token with that extracted value.
+
+Purpose: turn source text between quotes into a STRING token, tracking line numbers and detecting missing closing quotes.
+
+Why are we calling advance()?
+- `advance()` consumes the current character: it returns `source.charAt(current)` and then increments `current`.  
+- Inside the loop, `peek()` only looks ahead without moving. Without calling `advance()`, `current` would never progress, causing an infinite loop. So each iteration:
+1. Check if current char is a closing quote or end of source.
+2. If it is a newline, increment the line counter.
+3. Call `advance()` to consume that character and move forward to the next one.
+
+Purpose: sequentially skip over all characters inside the string literal until the terminating `"` (or report unterminated if EOF).
