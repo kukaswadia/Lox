@@ -50,7 +50,7 @@ This function processes a string of source code and prints out its tokens.
 **Syntax breakdown:**
 - `private static void run(String source)`: Declares a private static method named `run` that takes a `String` parameter called `source` and returns nothing (`void`).
 - `Scanner scanner = new Scanner(source);`: Creates a new `Scanner` object, passing the source code string to its constructor.
-- `List<Token> tokens = scanner.scanTokens();`: Calls `scanTokens()` on the scanner, which returns a list of `Token` objects.
+  - `List<Token> tokens = scanner.scanTokens();`: Calls `scanTokens()` on the scanner, which returns a list of `Token` objects.
 - `for (Token token : tokens) { ... }`: Enhanced for-loop that iterates over each token in the list.
 - `System.out.println(token);`: Prints each token to the console.
 

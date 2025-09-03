@@ -437,3 +437,250 @@ Why are we calling advance()?
 3. Call `advance()` to consume that character and move forward to the next one.
 
 Purpose: sequentially skip over all characters inside the string literal until the terminating `"` (or report unterminated if EOF).
+
+
+```java
+            default:
+                if (isDigit(c)) {
+                    number();
+                } else {
+                    Lox.error(line, "Unexpected character.");
+                }
+                break;
+```
+
+What does the above code do?
+- In the scanner's switch over the current character, the default branch handles any character not matched earlier. 
+- It checks:
+  - if the character is a digit -> it then delegates to number() to consume a full numberic literal.
+  - otherwise it reports a lexical error via Lox.error starting the character is unexpected.
+- Then it breaks out of the switch. 
+
+```java
+    private boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+```
+- The above code will return True if the given character lies in the ASCII rangge for digits '0' through '9'; otherwise false. 
+
+```java
+    private void number() {
+        while (isDigit(peek())) advance();
+
+        // Look for a functional part.
+        if (peek() == '.' && isDigit(peekNext())) {
+            // Consume the "."
+            advance();
+
+            while (isDigit(peek())) advance();
+        }
+
+        addToken(NUMBER, Double.parseDouble(source.substring(start, current)));
+    }
+```
+
+Explain the above code? 
+```java
+while (isDigit(peek())) advance();
+```
+- This consumes all consecutive digit characters for the integer part.
+- peek() looks ahead without consuming.
+- advance() moves current forward.
+
+```java
+        if (peek() == '.' && isDigit(peekNext())) {
+            advance();
+```
+- This means only treat a '.' as decimal point if followed by a digit
+- advance() -> consumes the '.'
+
+```java
+        addToken(NUMBER, Double.parseDouble(source.substring(start, current)));
+```
+- This slices the source from start up to (but not including) current 
+- parse it as a double 
+- and emit a NUMBER token that will carry both lexeme text and numeric value. 
+- In the above, substring(start, current) -> creates the exact lexeme slice (start inclusive, current exclusive)
+- That slice is first parsed(DOuble.parseDouble(...)) and later (in addToken) the same indices are used again to slice for the token text.
+
+## What does parse above mean?
+- Parse means take the raw substring of characters that make up the numeric lexeme and interpret(decode) it according to the numeric grammar to produce an actual numeric value ( a double) the program can use. 
+- So essentially, the scanner first slices the lexeme text (the characters)
+- Double.parseDouble(...) validates that text matches the format for a floating-point literal and converts it into an internal binary IEEE-754 double. 
+- Now you have both:
+  - the lexeme string (for re-printing / error msgs)
+  - the parsed numeric literal value (for computation)
+- So to conclude, parse means -> interpret the character sequence as a number and create its structured runtime value. 
+
+## Where does the code say consume all consecutive digit characters? 
+- peek() -> looks at the current (next unconsumed) character without moving the cursor. 
+- isDigit(peek()) -> tests whethere that character is a digit
+- advance() -> consumes exactly one character (increments current)
+- while -> repeats this as long as the next character is still a digit
+- The first non-digit causes the condition to become false, exiting the loop
+
+## Overall flow: 
+
+1. The scanner detects a starting digit
+2. Delegates to number()
+3. Which consumes integer digits, optionally a fractional portion
+4. Then emits a typed token
+5. Unexpected non-digit characters in the default branch causes an error. 
+
+- We consume as many digits as we find for the integer part of the literal. 
+- Then we look for a fractional part, which is a decimal point (.) followed by at least one digit. 
+- If we do have a fractional part, again, we consume as many digits as we can find. 
+- Looking past the decimal point requires a second character of lookahead since we don't want to consume the '.' until we are sure there is a digit after it.
+- So we add:
+
+```java
+    private char peekNext() {
+        if (current + 1 >= source.length()) return '\0';
+        return source.charAt(current + 1);
+    }
+```
+- the above cpde performs a one-character lookahead beyond the current position without consuming input. 
+- So it checks if current + 1 is past the end of the source. 
+- If so, returns the sentinel '\0' (means no next character)
+- Otherwise returns the character at index current + 1. 
+
+What is the purpose of the above? 
+- Supports decisions needing two characters of lookahead (e.g. detecting a fractional part after a .)
+- It differs from peek() as that looks at the current unconsumed char whereas this looks at the next one. 
+- Returns '\0' instead of throwinf an exception when there no next character 
+
+What do we mean by 'if current + 1 is past the end of the source'?
+- It means verify there really is another character after the one at index current
+- current is the index of the next unconsumed character. 
+- current + 1 would be the index of the character one position ahead
+- if current + 1 >= source.length() -> that index would be outside the valid range(past the last character), so there is no next character. 
+- In that case the method returns the sentinel '\0' instead of trying to access memory out of bounds. 
+
+
+## What is maximal munch?
+- When two lexical grammar rules can both match a chunk of code that the scanner is looking at, whichever one matches the most character wins. 
+- That rule states that if we match orchid as an identifier and or as a keyword, then the former wins. 
+- This is also why we assumed that <= should be scanned as a single <= token and not < followed by =
+
+```java
+    private void identifier() {
+        while (isAlphaNumeric(peek())) advance();
+        addToken(IDENTIFIER);
+    }
+```
+
+- The above code scans an identifier (a name) starting at the current lexeme start.
+- Before this method is called, start was set to the current index. 
+- The while loop keeps looking at the next unconsumed char via peek().
+- isAlphaNumeric(...) return true for letters, digits, or _
+- As long as the above is true, advance() consumes the character and moves current forward.
+- The loop stops at the first non-alphanumeric character, leaving current just past the last valid identifier char. 
+- addToken(IDENTIFIER) slices the source substring from start (inclusive) to current (exclusive) and creates a token of type identifier with that text. 
+
+### Where does the code set start to the current index? 
+- It is done in the main scanning loop in scanTokens() before every token is scanned.
+
+```java
+private List<Token> scanTokens() {
+    while (!isAtEnd()) {
+        start = current;   // <-- start set to current here
+        scanToken();       // may call identifier(), number(), string(), etc.
+    }
+    tokens.add(new Token(EOF, "", null, line));
+    return tokens;
+}
+```
+- So when scanToken() later detects a letter and calls identifier(), start already marks the beginning of that lexeme. 
+
+What is the code below doing and how is it different?
+
+```java
+    private boolean isAlpha(char c) {
+        return (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                c == '_';
+    }
+    
+    private boolean isAlphaNumeric(char c) {
+        return isAlpha(c) || isDigit(c);
+    }
+```
+
+- isAlpha returns true if the character is:
+  - a lower case letter ('a' - 'z')
+  - an uppercase letter ('A' - 'Z')
+  - an underscore ('_')
+- isAlphaNumeric broadens that by also allowing digits: it calls isAlpha and (else) isDigit (which checks '0' - '9').
+- Together they classify characters valid in identifiers: first char handled by isAlpha, subsequent chars by isAlphaNumeric. 
+
+- To handle keywords, we see if the identifier's lexeme is one of the reserved words. 
+- If so, we use a token type specific to that keyword. 
+- We define the set of reserved words in a map. 
+- Then after we can an identifier, we check to see if it matches anything in the map. 
+
+```java
+    private void identifier() {
+        while (isAlphaNumeric(peek())) advance();
+
+        String text = source.substring(start, current);
+        TokenType type = keywords.get(text);
+        if (type == null) type = IDENTIFIER;
+        addToken(type);
+    }
+```
+
+## Breakdown of what happens inside the identifier scanning logic:
+
+Preconditions:
+1. In the main loop scanTokens(), before any specific token scan starts, 
+2. start is set to the current index. 
+3. A leading character (already consumed by scanTokens()) was recognized as a letter or underscore
+4. so the identifier routine is invoked with start pointing at the first character of the lexeme and current already one past that first character. 
+
+Looping over the rest:
+1. while (isAlphaNumeric(peek())) advance(); -> repeatedly looks ahead at the next unconsumed character (without moving) using peek(). 
+2. If it is a letter, digit, or underscore -> advance() consumes it (increments current). 
+3. This continues until the next character is not valid in an identifier or end of source is reached. 
+4. After the loop, current is positioned just after the final identifier character. 
+
+Extracting the raw text:
+1. The substring from start (inclusive) to current (exclusive) is taken - this is the exact identifier lexeme as it appeared in source. 
+
+Keyword check:
+1. A lookup is performed in the keywords map. 
+2. If the text matches a reserved word (e.g. class, for, return). the corresponding reserved TokenType is used. 
+3. If the map returns null, it is treated as a user-defined name and the type defaults to IDENTIFIER. 
+
+Token Creation:
+1. addToken(type) is called
+2. That method re-slices the same substring ( a tiny redundant substring operation ) and constricts a Token with:
+   - the resolved TokenType
+   - the lexeme text 
+   - a null literal value (identifiers/keywords have no literal)
+   - the current line number.
+
+Result:
+1. The new token is appended to the token list
+2. Scanning then resumes from the character that terminated the loop.
+
+### Key concepts:
+1. start marks where the current token began
+2. current is one past the last consumed character
+3. peek() is non-consuming lookahead; advance() consumes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
